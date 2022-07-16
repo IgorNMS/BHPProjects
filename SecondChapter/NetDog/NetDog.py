@@ -38,6 +38,18 @@ def usage():
     sys.exit(0)
 
 
+def run_command(r_command):
+    # Remove a quebra de linha
+    r_command = r_command.rstrip()
+    # Executa o comando e obtem os dados de saida
+    try:
+        output = subprocess.check_output(r_command, stderr=subprocess.STDOUT, shell=True)
+    except:
+        output = "Failed to execute command.\r\n"
+    # Envia dados de saida ao cliente
+    return output
+
+
 def client_sender(buffer):
     client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
@@ -108,11 +120,12 @@ def client_handler(client_socket):
     if command:
         while True:
             # Mostra um prompt simples
-            client_socket.send("<BHP:#> ")
+            client_socket.send(to_byte("<BHP:#> "))
             # Agora ficamos recebendo dados ate vermos um linefeed (tecla enter)
             cmd_buffer = ""
             while "\n" not in cmd_buffer:
-                cmd_buffer += client_socket.recv(1024)
+                to_str = client_socket.recv(1024)
+                cmd_buffer += to_str.decode()
 
             # Envia de volta a saida do comando
             response = run_command(cmd_buffer)
@@ -135,18 +148,6 @@ def server_loop():
         # Dispara uma tread para cuidar de nosso novo cliente
         client_thread = threading.Thread(target=client_handler, args=(client_socket,))
         client_thread.start()
-
-
-def run_command(r_command):
-    # Remove a quebra de linha
-    r_command = r_command.rstrip()
-    # Executa o comando e obtem os dados de saida
-    try:
-        output = subprocess.check_output(r_command, stderr=subprocess.STDOUT, shell=True)
-    except:
-        output = "Failed to execute command.\r\n"
-    # Envia dados de saida ao cliente
-    return output
 
 
 def main():
