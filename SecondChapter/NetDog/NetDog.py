@@ -112,7 +112,7 @@ def client_handler(client_socket):
             # Agora ficamos recebendo dados ate vermos um linefeed (tecla enter)
             cmd_buffer = ""
             while "\n" not in cmd_buffer:
-                cmd_buffer += client_socket.recv(1024)
+                cmd_buffer += str(client_socket.recv(1024))
 
             # Envia de volta a saida do comando
             response = run_command(cmd_buffer)
