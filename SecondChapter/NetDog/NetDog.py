@@ -1,205 +1,151 @@
-# NetCat improvisado com python
-
-import sys
+import argparse
 import socket
-import getopt
-import threading
+import shlex
 import subprocess
-
-# Definindo algumas variaveis globais
-listen = False
-command = False
-upload = False
-execute = ""
-target = ""
-upload_destination = ""
-port = 0
+import sys
+import textwrap
+import threading
 
 
-def to_byte(str_obj):
-    return str_obj.encode()
+def execute(cmd):
+    cmd - cmd.strip()
+    if not cmd:
+        return
+    # 1-We’re using its check_output method, which runs a command on the local operating system and then
+    # returns the output from that command.
+    output = subprocess.check_output(shlex.split(cmd), stderr=subprocess.STDOUT)
+    return output.decode()
 
 
-def usage():
-    print("NetDog Net Tool")
-    print("")
-    print("Usage: NetDog.py -t target_host -p port")
-    print("-l --listen               - listen on [host]:[port] for incoming connections")
-    print("-e --execute=file_to_run  - execute the given file upon receiving a connection")
-    print("-c --command              - initialize a command shell")
-    print("-u --upload=destination   -upon receiving connection upload a file and write to [destination]")
-    print("")
-    print("")
-    print("Examples: ")
-    print("NetDog.py -t 127.0.0.1 -p 5555 -l -c")
-    print("NetDog.py -t 127.0.0.1 -p 5555 -l -u=c:\\target.exe")
-    print("NetDog.py -t 127.0.0.1 -p 5555 -l -e=\"cat /etc/passwd\"")
-    print("echo 'NetDog' | ./NetDog.py -t 127.0.0.1 -p 135")
-    sys.exit(0)
+class NetDog:
+    # 1-We initialize the NetDog object with the arguments from the command line and the buffer
+    def __init__(self, args, buffer=None):
+        self.args = args
+        self.buffer = buffer
+        # 2-We create the socket object
+        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
-
-def run_command(r_command):
-    # Remove a quebra de linha
-    r_command = r_command.rstrip()
-    # Executa o comando e obtem os dados de saida
-    try:
-        output = subprocess.check_output(r_command, stderr=subprocess.STDOUT, shell=True)
-    except:
-        output = "Failed to execute command.\r\n"
-    # Envia dados de saida ao cliente
-    return output
-
-
-def client_sender(buffer):
-    client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    try:
-        # Conecta-se ao nosso alvo
-        client.connect((target, port))
-        if len(buffer):
-            client.send(to_byte(buffer))
-
-        while True:
-            # Agora espera receber dados de volta
-            recv_len = 1
-            response = ""
-
-            while recv_len:
-                data = client.recv(4096)
-                recv_len = len(data)
-                response += data
-                if recv_len < 4096:
-                    break
-
-            print(response),
-            # Espera mais dados de entrada
-            buffer = input("")
-            buffer += "\n"
-
-            # Envia dados
-            client.send(to_byte(buffer))
-    except:
-        print("[*] Exception! Stopping")
-        # Encerra conexao
-        client.close()
-
-
-def client_handler(client_socket):
-    global upload
-    global execute
-    global command
-
-    # Verifica se e upload
-    if len(upload_destination):
-        # Le todos os bytes e grava em nosso destino
-        file_buffer = ""
-        # Permanece lendo os dados ate que não haja mais nenhum disponivel
-        while True:
-            data = client_socket.recv(1024)
-            if not data:
-                break
-            else:
-                file_buffer += data
-
-        # Agora tentaremos gravar esses bytes
-        try:
-            file_descriptor = open(upload_destination, "wb")
-            file_descriptor.write(to_byte(file_buffer))
-            file_descriptor.close()
-            # Confirma que gravamos o arquivo
-            client_socket.send(to_byte("Successfully saved file to %s\r\n" % upload_destination))
-        except:
-            client_socket.send(to_byte("Failed to save file to %s\r\n" % upload_destination))
-
-    # Verifica se e execucao de comando
-    if len(execute):
-        # Executa o comando
-        output = run_command(execute)
-        client_socket.send(to_byte(output))
-
-    # Entra em outro laco se um shell de comandos foi solicitado
-    if command:
-        while True:
-            # Mostra um prompt simples
-            client_socket.send(to_byte("<BHP:#> "))
-            # Agora ficamos recebendo dados ate vermos um linefeed (tecla enter)
-            cmd_buffer = ""
-            while "\n" not in cmd_buffer:
-                to_str = client_socket.recv(1024)
-                cmd_buffer += to_str.decode()
-
-            # Envia de volta a saida do comando
-            response = run_command(cmd_buffer)
-            # Envia de volta a resposta
-            client_socket.send(to_byte(response))
-
-
-def server_loop():
-    global target
-    # Se não houver nenhum alvo definido, ouviremos todas as interfaces
-    if not len(target):
-        target = "0.0.0.0"
-
-    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server.bind((target, port))
-    server.listen(5)
-
-    while True:
-        client_socket, addr = server.accept()
-        # Dispara uma tread para cuidar de nosso novo cliente
-        client_thread = threading.Thread(target=client_handler, args=(client_socket,))
-        client_thread.start()
-
-
-def main():
-    global listen
-    global port
-    global execute
-    global command
-    global upload_destination
-    global target
-
-    argumentsArray = ["help", "listen", "execute", "target", "port", "command", "upload"]
-
-    if not len(sys.argv[1:]):
-        usage()
-
-    # Le as opções da linha de comando
-    try:
-        opts, args = getopt.getopt(sys.argv[1:], "hle:t:p:cu:", argumentsArray)
-    except getopt.GetoptError as err:
-        print(str(err))
-        usage()
-
-    for o, a in opts:
-        if o in ("-h", "--help"):
-            usage()
-        elif o in ("-l", "--listen"):
-            listen = True
-        elif o in ("-e", "--execute"):
-            execute = a
-        elif o in ("-c", "--command"):
-            command = True
-        elif o in ("-u", "--upload"):
-            upload_destination = a
-        elif o in ("-t", "--target"):
-            target = a
-        elif o in ("-p", "--port"):
-            port = int(a)
+    def run(self):
+        if self.args.listen:
+            # 3-The run method, which is the entry point for managing the NetCat object,
+            # is pretty simple: it delegates execution to two methods. If we’re setting up a
+            # listener, we call the listen method
+            self.listen()
         else:
-            assert False, "Unhandled Option"
+            # 4-Otherwise, we call the send method
+            self.send()
 
-    # Iremos ouvir ou enviar dados de stdin?
-    if not listen and len(target) and port > 0:
-        # Le o buffer da linha de comando
-        # Isso causara um bloqueio, portanto envie um CTROL-D se não estiver enviando dados de entrada para o stdin
+    def send(self):
+        # 1-We connect to the target and port
+        self.socket.connect((self.args.target, self.args.port))
+        if self.buffer:
+            self.socket.send(self.buffer)
+        # 2-If we have a buffer, we send that to the target first. Then we set up a try/catch block -so we can manually
+        # close the connection with CTRL-C
+        try:
+            # 3-Next, we start a loop to receive data from the target.
+            while True:
+                recv_len = 1
+                response = ''
+                while recv_len:
+                    data = self.socket.recv(4096)
+                    recv_len = len(data)
+                    response += data.decode()
+                    if recv_len < 4096:
+                        # 4-If there is no more data, we break out of the loop
+                        break
+                if response:
+                    print(response)
+                    buffer = input('> ')
+                    buffer += '\n'
+                    # 5-Otherwise, we print the response data and pause to get interactive input,
+                    # send that input, and continue the loop.
+                    self.socket.send(buffer.encode())
+        # 6-The loop will continue until the KeyboardInterrupt (CTRL-C) occurs, which will close the socket
+        except KeyboardInterrupt:
+            print('User terminated.')
+            self.socket.close()
+            sys.exit()
+
+    def listen(self):
+        # 1-The listen method binds to the target and port
+        self.socket.bind((self.args.target, self.args.port))
+        self.socket.listen(5)
+        # 2-And starts listening in a loop
+        while True:
+            client_socket, _ = self.socket.accept()
+            # 3-Passing the connected socket to the handle method
+            client_thread = threading.Thread(target=self.handle, args=(client_socket,))
+            client_thread.start()
+
+    def handle(self, client_socket):
+        # 1-The handle method executes the task corresponding to the command
+        # line argument it receives: execute a command, upload a file, or start a
+        # shell. If a command should be executed, the handle method passes that
+        # command to the execute function and sends the output back on the socket
+        if self.args.execute:
+            output = execute(self.args.execute)
+            client_socket.send(output.encode())
+        # 2-If a file should be uploaded, we set up a loop to listen for content on the listening socket
+        # and receive data until there’s no more data coming in. Then we
+        # write that accumulated content to the specified file
+        elif self.args.upload:
+            file_buffer = b''
+            while True:
+                data = client_socket.recv(4096)
+                if data:
+                    file_buffer += data
+                else:
+                    break
+            with open(self.args.upload, 'wb') as f:
+                f.write(file_buffer)
+            message = f'Saved file {self.args.upload}'
+            client_socket.send(message.encode())
+        # 3-Finally, if a shell is to be created, we set up a loop,
+        # send a prompt to the sender, and wait for a command string to come back.
+        elif self.args.command:
+            cmd_buffer = b''
+            while True:
+                try:
+                    client_socket.send(b'BHP: #> ')
+                    while '\n' not in cmd_buffer.decode():
+                        cmd_buffer += client_socket.recv(64)
+                    response = execute(cmd_buffer.decode())
+                    if response:
+                        client_socket.send(response.encode())
+                    cmd_buffer = b''
+                except Exception as e:
+                    print(f'Server killed {e}')
+                    self.socket.close()
+                    sys.exit()
+
+
+if __name__ == '__main__':
+    # 1-We use the argparse module from the standard library to create a command line interface.
+    parser = argparse.ArgumentParser(
+        description='NetDog',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        # 2-We provide example usage that the program will display when the user invokes it with --help.
+        epilog=textwrap.dedent('''Example:
+            netcat.py -t 192.168.1.108 -p 5555 -l -c # command shell
+            netcat.py -t 192.168.1.108 -p 5555 -l -u=mytest.txt # upload to file
+            netcat.py -t 192.168.1.108 -p 5555 -l -e=\"cat /etc/passwd\" # execute command
+            echo 'ABC' | ./netcat.py -t 192.168.1.108 -p 135 # echo text to server port 135
+            netcat.py -t 192.168.1.108 -p 5555 # connect to server
+        '''))
+    # 3-Add six arguments that specify how we want the program to behave.
+    parser.add_argument('-c', '--command', action='store_true', help='command shell')
+    parser.add_argument('-e', '--execute', help='execute specified command')
+    parser.add_argument('-l', '--listen', action='store_true', help='listen')
+    parser.add_argument('-p', '--port', type=int, default=5555, help='specified port')
+    parser.add_argument('-t', '--target', default='192.168.1.203', help='specified IP')
+    parser.add_argument('-u', '--upload', help='upload file')
+    args = parser.parse_args()
+    # 4-If we’re setting it up as a listener, we invoke the NetCat object with an empty buffer string.
+    if args.listen:
+        buffer = ''
+    else:
         buffer = sys.stdin.read()
-        # Send data off
-        client_sender(buffer)
-
-    # Iremos ouvir a porta e, potencialmente, faremos upload de dados, executaremos comandos e deixaremos um shell
-    # de acordo com as opçoes de linha de comando anteriores
-    if listen:
-        server_loop()
-
-
-main()
+    nd = NetDog(args, buffer.encode())
+    nd.run()
